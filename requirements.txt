@@ -1,0 +1,8 @@
+Django>=5.2,<5.3
+djangorestframework>=3.15,<3.16
+psycopg[binary]>=3.2,<3.3
+daraja
+requests
+whitenoise>=6.7,<7
+psutil>=6.0; extra != "desktop"
+pyinstaller>=6.8; extra == "desktop"
