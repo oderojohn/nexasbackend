@@ -79,6 +79,7 @@ ADMIN_SECTION_PERMISSIONS = {
     "Security": ["admin.security", "admin.settings"],
     "System Settings": ["admin.settings"],
     "POS Operations": ["admin.settings"],
+    "Credit & Loyalty": ["admin.settings"],
     "Stock Controls": ["admin.settings"],
     "Audit Logs": ["admin.audit"],
     "Notifications": ["admin.notifications", "admin.settings"],

@@ -9,8 +9,10 @@ from .models import (
     AuditLog,
     Branch,
     CashTransaction,
+    CreditRepayment,
     Customer,
     InventoryStock,
+    LoyaltyTransaction,
     Payment,
     PurchaseOrder,
     PurchaseOrderItem,
@@ -90,7 +92,7 @@ def require_open_shift(shift):
 
 
 @transaction.atomic
-def checkout_sale(*, cashier, branch, register, shift, customer=None, mode=Sale.RETAIL, items=None, payments=None, device_id=None, receipt_no=None):
+def checkout_sale(*, cashier, branch, register, shift, customer=None, mode=Sale.RETAIL, items=None, payments=None, device_id=None, receipt_no=None, override_credit_limit=False):
     branch = Branch.objects.select_for_update().get(pk=branch.pk)
     shift = Shift.objects.select_for_update().get(pk=shift.pk)
     require_open_shift(shift)
@@ -185,10 +187,16 @@ def checkout_sale(*, cashier, branch, register, shift, customer=None, mode=Sale.
         customer = Customer.objects.select_for_update().get(pk=customer.pk)
         if customer.credit_limit <= 0:
             raise ValidationError({"customer": "This customer does not have a credit limit set."})
-        if customer.credit_balance + credit_amount > customer.credit_limit:
-            raise ValidationError({"customer": "This sale would exceed the customer's credit limit."})
+        exceeds_limit = customer.credit_balance + credit_amount > customer.credit_limit
+        if exceeds_limit and not override_credit_limit:
+            raise ValidationError({"customer": "Customer has exceeded the available credit limit."})
         customer.credit_balance = quantize_money(customer.credit_balance + credit_amount)
         customer.save(update_fields=["credit_balance", "updated_at"])
+        if exceeds_limit and override_credit_limit:
+            audit(
+                user=cashier, action="sale.credit_limit_override", entity="Customer", entity_id=customer.id,
+                branch=branch, notes=f"Credit limit overridden for {customer.name}: balance {customer.credit_balance} vs limit {customer.credit_limit}",
+            )
 
     for payment in payments:
         Payment.objects.create(
@@ -205,11 +213,6 @@ def checkout_sale(*, cashier, branch, register, shift, customer=None, mode=Sale.
     sale.paid_total = quantize_money(paid_total)
     sale.change_due = quantize_money(paid_total - total)
     sale.save()
-
-    if branch.loyalty_enabled and customer and branch.loyalty_points_rate > 0:
-        points_earned = int(total // branch.loyalty_points_rate)
-        if points_earned > 0:
-            Customer.objects.filter(pk=customer.pk).update(loyalty_points=F("loyalty_points") + points_earned)
 
     cash_paid = sum((payment.amount for payment in sale.payments.filter(method=Payment.CASH)), Decimal("0.00"))
     if cash_paid:
@@ -256,12 +259,19 @@ def void_sale(*, sale, user, reason):
             customer.credit_balance = quantize_money(max(Decimal("0.00"), customer.credit_balance - credit_paid))
             customer.save(update_fields=["credit_balance", "updated_at"])
 
-        if sale.branch.loyalty_enabled and sale.branch.loyalty_points_rate > 0:
-            points_to_reverse = int(sale.total // sale.branch.loyalty_points_rate)
-            if points_to_reverse > 0:
-                customer = Customer.objects.select_for_update().get(pk=sale.customer_id)
-                customer.loyalty_points = max(0, customer.loyalty_points - points_to_reverse)
-                customer.save(update_fields=["loyalty_points", "updated_at"])
+    earned_points = sum(
+        (t.points for t in LoyaltyTransaction.objects.filter(sale=sale, transaction_type=LoyaltyTransaction.EARN)),
+        0,
+    )
+    if earned_points:
+        customer = Customer.objects.select_for_update().get(pk=sale.customer_id)
+        customer.loyalty_points = max(0, customer.loyalty_points - earned_points)
+        customer.save(update_fields=["loyalty_points", "updated_at"])
+        LoyaltyTransaction.objects.create(
+            customer=customer, branch=sale.branch, points=-earned_points,
+            transaction_type=LoyaltyTransaction.ADJUSTMENT, sale=sale, recorded_by=user,
+            notes=f"Reversed on void of {sale.receipt_no}",
+        )
 
     sale.status = Sale.VOIDED
     sale.voided_at = timezone.now()
@@ -270,6 +280,99 @@ def void_sale(*, sale, user, reason):
     sale.save(update_fields=["status", "voided_at", "voided_by", "void_reason", "updated_at"])
     audit(user=user, action="sale.void", entity="Sale", entity_id=sale.id, branch=sale.branch, notes=reason)
     return sale
+
+
+@transaction.atomic
+def record_credit_repayment(*, customer, amount, recorded_by, notes=""):
+    customer = Customer.objects.select_for_update().get(pk=customer.pk)
+    amount = quantize_money(amount)
+    if amount <= 0:
+        raise ValidationError({"amount": "Amount must be greater than zero."})
+    if amount > customer.credit_balance:
+        raise ValidationError({"amount": "Amount cannot exceed the outstanding balance."})
+    customer.credit_balance = quantize_money(customer.credit_balance - amount)
+    customer.save(update_fields=["credit_balance", "updated_at"])
+    repayment = CreditRepayment.objects.create(
+        customer=customer, branch=customer.branch, amount=amount, recorded_by=recorded_by, notes=notes,
+    )
+    audit(
+        user=recorded_by, action="customer.settle_credit", entity="Customer", entity_id=customer.id,
+        branch=customer.branch, notes=f"Recorded repayment of {amount} for {customer.name}",
+    )
+    return repayment
+
+
+@transaction.atomic
+def award_loyalty_points(*, customer, sale_amount, recorded_by, branch, sale=None):
+    from .admin_settings import get_or_create_company_settings
+
+    if not branch.loyalty_enabled:
+        raise ValidationError({"branch": "Loyalty points are not enabled for this branch."})
+    settings_obj = get_or_create_company_settings(branch.company)
+    policy = settings_obj.merged_settings()["credit_loyalty"]
+    sale_amount = quantize_money(sale_amount)
+    minimum_purchase = Decimal(str(policy.get("loyalty_minimum_purchase_amount") or 0))
+    if sale_amount < minimum_purchase:
+        raise ValidationError({"sale_amount": f"A minimum purchase of {minimum_purchase} is required to earn points."})
+    if branch.loyalty_points_rate <= 0:
+        raise ValidationError({"branch": "Loyalty earn rate is not configured for this branch."})
+
+    customer = Customer.objects.select_for_update().get(pk=customer.pk)
+    points_earned = int(sale_amount // branch.loyalty_points_rate)
+    if points_earned <= 0:
+        raise ValidationError({"sale_amount": "Sale amount is too small to earn any points."})
+    customer.loyalty_points = customer.loyalty_points + points_earned
+    customer.save(update_fields=["loyalty_points", "updated_at"])
+    LoyaltyTransaction.objects.create(
+        customer=customer, branch=branch, points=points_earned,
+        transaction_type=LoyaltyTransaction.EARN, sale=sale, recorded_by=recorded_by,
+    )
+    return points_earned, customer.loyalty_points
+
+
+@transaction.atomic
+def redeem_loyalty_points(*, customer, points, recorded_by, branch):
+    from .admin_settings import get_or_create_company_settings
+
+    settings_obj = get_or_create_company_settings(branch.company)
+    policy = settings_obj.merged_settings()["credit_loyalty"]
+    minimum_points = int(policy.get("loyalty_minimum_points_redemption") or 0)
+    redemption_rate = Decimal(str(policy.get("loyalty_redemption_rate") or 0))
+    if points <= 0:
+        raise ValidationError({"points": "Points must be greater than zero."})
+    if points < minimum_points:
+        raise ValidationError({"points": f"A minimum of {minimum_points} points is required to redeem."})
+
+    customer = Customer.objects.select_for_update().get(pk=customer.pk)
+    if points > customer.loyalty_points:
+        raise ValidationError({"points": "Customer does not have enough loyalty points."})
+    customer.loyalty_points = customer.loyalty_points - points
+    customer.save(update_fields=["loyalty_points", "updated_at"])
+    LoyaltyTransaction.objects.create(
+        customer=customer, branch=branch, points=-points,
+        transaction_type=LoyaltyTransaction.REDEEM, recorded_by=recorded_by,
+    )
+    value = quantize_money(Decimal(points) * redemption_rate)
+    return value, customer.loyalty_points
+
+
+@transaction.atomic
+def adjust_loyalty_points(*, customer, points_delta, recorded_by, reason):
+    if points_delta == 0:
+        raise ValidationError({"points_delta": "Adjustment cannot be zero."})
+    if not reason:
+        raise ValidationError({"reason": "A reason is required for manual adjustments."})
+    customer = Customer.objects.select_for_update().get(pk=customer.pk)
+    new_balance = customer.loyalty_points + points_delta
+    if new_balance < 0:
+        raise ValidationError({"points_delta": "Adjustment would make the balance negative."})
+    customer.loyalty_points = new_balance
+    customer.save(update_fields=["loyalty_points", "updated_at"])
+    LoyaltyTransaction.objects.create(
+        customer=customer, branch=customer.branch, points=points_delta,
+        transaction_type=LoyaltyTransaction.ADJUSTMENT, recorded_by=recorded_by, notes=reason,
+    )
+    return customer.loyalty_points
 
 
 @transaction.atomic

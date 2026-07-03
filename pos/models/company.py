@@ -40,6 +40,18 @@ def default_company_settings():
             "low_stock_alerts": True,
             "stock_adjustment_approval": True,
         },
+        "credit_loyalty": {
+            "default_customer_credit_limit": 0,
+            "allow_credit_limit_override": False,
+            "credit_warning_percentage": 80,
+            "max_credit_limit_per_customer": 0,
+            "credit_due_period_days": 30,
+            "loyalty_minimum_purchase_amount": 0,
+            "loyalty_redemption_rate": 1,
+            "loyalty_minimum_points_redemption": 100,
+            "loyalty_points_expiry_days": 0,
+            "loyalty_manual_adjustment_enabled": True,
+        },
         "notifications": {
             "low_stock": {"sms": False, "email": True, "whatsapp": False, "recipients": "inventory"},
             "daily_sales": {"sms": False, "email": True, "whatsapp": False, "recipients": "managers"},
@@ -150,6 +162,7 @@ class CompanySettings(TimeStampedModel):
     super_admin = models.JSONField(default=dict, blank=True)
     email_config = models.JSONField(default=dict, blank=True)
     cloud_config = models.JSONField(default=dict, blank=True)
+    credit_loyalty = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name_plural = "Company settings"
@@ -161,6 +174,7 @@ class CompanySettings(TimeStampedModel):
             "system": {**defaults["system"], **(self.system or {})},
             "pos_operations": {**defaults["pos_operations"], **(self.pos_operations or {})},
             "stock_controls": {**defaults["stock_controls"], **(self.stock_controls or {})},
+            "credit_loyalty": {**defaults["credit_loyalty"], **(self.credit_loyalty or {})},
             "notifications": {**defaults["notifications"], **(self.notifications or {})},
             "financial": {**defaults["financial"], **(self.financial or {})},
             "pricing": {**defaults["pricing"], **(self.pricing or {})},

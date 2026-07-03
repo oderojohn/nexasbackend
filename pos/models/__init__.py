@@ -2,7 +2,7 @@ from ._base import SyncMixin, TimeStampedModel
 from .company import Branch, Company, CompanySettings, default_company_settings
 from .auth import BlacklistedToken, PermissionGroup, UserProfile
 from .product import Category, Product
-from .customer import Customer, Supplier
+from .customer import CreditRepayment, Customer, LoyaltyTransaction, Supplier
 from .shift import CashTransaction, Register, Shift
 from .sale import (
     HeldOrder,
@@ -45,7 +45,9 @@ __all__ = [
     "Category",
     "Product",
     # customer
+    "CreditRepayment",
     "Customer",
+    "LoyaltyTransaction",
     "Supplier",
     # shift
     "CashTransaction",

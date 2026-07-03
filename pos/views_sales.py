@@ -52,6 +52,7 @@ from .views_helpers import (
     _positive_int_query_param,
     _resolve_read_branch,
     _resolve_write_branch,
+    is_branch_admin,
 )
 
 logger = logging.getLogger(__name__)
@@ -581,6 +582,11 @@ class SaleViewSet(viewsets.ReadOnlyModelViewSet):
             mode=validated.get('mode', Sale.RETAIL),
             items=validated.get('items', []),
         )
+        if validated.get("override_credit_limit"):
+            from .admin_settings import get_or_create_company_settings
+            policy = get_or_create_company_settings(validated["branch"].company).merged_settings()["credit_loyalty"]
+            can_override = policy.get("allow_credit_limit_override") and is_branch_admin(request.user)
+            validated["override_credit_limit"] = bool(can_override)
         sale = checkout_sale(**validated)
         if paid_mpesa_log:
             mpesa_payment = sale.payments.filter(method=Payment.MPESA).first()

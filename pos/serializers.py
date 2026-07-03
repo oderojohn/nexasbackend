@@ -360,6 +360,7 @@ class CompanySettingsSerializer(serializers.ModelSerializer):
             "security", "system", "pos_operations", "stock_controls",
             "notifications", "financial", "pricing", "backup",
             "integrations", "super_admin", "email_config", "cloud_config",
+            "credit_loyalty",
             "created_at", "updated_at",
         )
         read_only_fields = ("company", "created_at", "updated_at")
@@ -512,10 +513,17 @@ class InventoryStockSerializer(serializers.ModelSerializer):
 
 
 class CustomerSerializer(serializers.ModelSerializer):
+    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.filter(is_active=True), required=False, allow_null=True)
+
     class Meta:
         model = Customer
         fields = "__all__"
         read_only_fields = ("credit_balance", "loyalty_points")
+        # branch is supplied server-side in perform_create/perform_update, never by the
+        # client — DRF's auto-generated UniqueTogetherValidator for the (branch, phone)
+        # constraint would otherwise force branch to be required at validation time.
+        # The phone-uniqueness check is done manually in CustomerViewSet instead.
+        validators = []
 
     def validate(self, attrs):
         branch = attrs.get("branch")
@@ -532,6 +540,8 @@ class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = "__all__"
+        # See CustomerSerializer — same (branch, name) UniqueConstraint issue.
+        validators = []
 
     def validate(self, attrs):
         branch = attrs.get("branch")
@@ -649,6 +659,7 @@ class CheckoutSerializer(serializers.Serializer):
     # Offline-sync fields — sent by desktop POS when re-uploading locally-created sales
     device_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
     receipt_no = serializers.CharField(required=False, allow_blank=True, max_length=40)
+    override_credit_limit = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         branch = attrs["branch"]

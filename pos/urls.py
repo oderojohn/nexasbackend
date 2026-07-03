@@ -25,6 +25,7 @@ from .views import (
     mpesa_callback,
     mpesa_direct_callback,
 )
+from .views_credit_loyalty_reports import CreditLoyaltyReportsViewSet
 from .views_discounts import DiscountRuleViewSet, PriceScheduleViewSet
 from .views_groups import PermissionGroupViewSet
 from .views_notifications import pos_notifications
@@ -65,6 +66,7 @@ router.register("report-schedules", ReportScheduleViewSet, basename="report-sche
 router.register("permission-groups", PermissionGroupViewSet, basename="permission-groups")
 router.register("mpesa-stk-logs", MpesaStkLogViewSet, basename="mpesa-stk-logs")
 router.register("mpesa-direct-logs", MpesaDirectPaymentLogViewSet, basename="mpesa-direct-logs")
+router.register("credit-loyalty-reports", CreditLoyaltyReportsViewSet, basename="credit-loyalty-reports")
 
 urlpatterns = [
     path("mpesa/callback", mpesa_callback, name="mpesa-callback"),
