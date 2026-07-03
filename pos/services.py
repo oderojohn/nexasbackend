@@ -1,7 +1,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import F, Max
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -9,6 +9,7 @@ from .models import (
     AuditLog,
     Branch,
     CashTransaction,
+    Customer,
     InventoryStock,
     Payment,
     PurchaseOrder,
@@ -172,6 +173,23 @@ def checkout_sale(*, cashier, branch, register, shift, customer=None, mode=Sale.
     if paid_total < total - Decimal("0.01"):
         raise ValidationError({"payments": "Paid amount cannot be less than sale total."})
 
+    credit_amount = sum(
+        (quantize_money(payment["amount"]) for payment in payments if payment["method"] == Payment.CREDIT),
+        Decimal("0.00"),
+    )
+    if credit_amount > 0:
+        if not branch.credit_sale_enabled:
+            raise ValidationError({"payments": "Credit sales are not enabled for this branch."})
+        if not customer:
+            raise ValidationError({"customer": "A customer is required for credit sales."})
+        customer = Customer.objects.select_for_update().get(pk=customer.pk)
+        if customer.credit_limit <= 0:
+            raise ValidationError({"customer": "This customer does not have a credit limit set."})
+        if customer.credit_balance + credit_amount > customer.credit_limit:
+            raise ValidationError({"customer": "This sale would exceed the customer's credit limit."})
+        customer.credit_balance = quantize_money(customer.credit_balance + credit_amount)
+        customer.save(update_fields=["credit_balance", "updated_at"])
+
     for payment in payments:
         Payment.objects.create(
             sale=sale,
@@ -187,6 +205,11 @@ def checkout_sale(*, cashier, branch, register, shift, customer=None, mode=Sale.
     sale.paid_total = quantize_money(paid_total)
     sale.change_due = quantize_money(paid_total - total)
     sale.save()
+
+    if branch.loyalty_enabled and customer and branch.loyalty_points_rate > 0:
+        points_earned = int(total // branch.loyalty_points_rate)
+        if points_earned > 0:
+            Customer.objects.filter(pk=customer.pk).update(loyalty_points=F("loyalty_points") + points_earned)
 
     cash_paid = sum((payment.amount for payment in sale.payments.filter(method=Payment.CASH)), Decimal("0.00"))
     if cash_paid:
@@ -225,6 +248,20 @@ def void_sale(*, sale, user, reason):
     if cash_paid:
         sale.shift.expected_cash = quantize_money(sale.shift.expected_cash - cash_paid + sale.change_due)
         sale.shift.save(update_fields=["expected_cash", "updated_at"])
+
+    if sale.customer_id:
+        credit_paid = sum((payment.amount for payment in sale.payments.filter(method=Payment.CREDIT)), Decimal("0.00"))
+        if credit_paid:
+            customer = Customer.objects.select_for_update().get(pk=sale.customer_id)
+            customer.credit_balance = quantize_money(max(Decimal("0.00"), customer.credit_balance - credit_paid))
+            customer.save(update_fields=["credit_balance", "updated_at"])
+
+        if sale.branch.loyalty_enabled and sale.branch.loyalty_points_rate > 0:
+            points_to_reverse = int(sale.total // sale.branch.loyalty_points_rate)
+            if points_to_reverse > 0:
+                customer = Customer.objects.select_for_update().get(pk=sale.customer_id)
+                customer.loyalty_points = max(0, customer.loyalty_points - points_to_reverse)
+                customer.save(update_fields=["loyalty_points", "updated_at"])
 
     sale.status = Sale.VOIDED
     sale.voided_at = timezone.now()

@@ -123,10 +123,10 @@ CLOUD_API_URL = os.getenv("CLOUD_API_URL", "").rstrip("/")
 CLOUD_SYNC_TOKEN = os.getenv("CLOUD_SYNC_TOKEN", "")
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 4},
+    },
 ]
 
 LANGUAGE_CODE = "en-us"

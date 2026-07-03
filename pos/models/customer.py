@@ -16,6 +16,8 @@ class Customer(SyncMixin, TimeStampedModel):
     email = models.EmailField(blank=True)
     tax_pin = models.CharField(max_length=40, blank=True)
     credit_limit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    credit_balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    loyalty_points = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
 
     class Meta:

@@ -1,5 +1,9 @@
+import random
 import re
+import string
+from decimal import Decimal
 
+from django.core.validators import RegexValidator
 from django.db import models
 
 from ._base import TimeStampedModel
@@ -98,7 +102,11 @@ def default_company_settings():
 
 class Company(TimeStampedModel):
     name = models.CharField(max_length=160)
-    code = models.CharField(max_length=20, unique=True)
+    code = models.CharField(
+        max_length=3,
+        unique=True,
+        validators=[RegexValidator(r"^[A-Z]{3}$", "Company code must be exactly 3 letters.")],
+    )
     currency = models.CharField(max_length=10, default="KES")
     vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
@@ -117,13 +125,15 @@ class Company(TimeStampedModel):
 
     @classmethod
     def generate_code(cls, name):
-        base = re.sub(r"[^A-Z0-9]", "", (name or "").upper())[:10] or "CO"
-        candidate = base
-        suffix = 1
-        while cls.objects.filter(code=candidate).exists():
-            suffix += 1
-            candidate = f"{base}{suffix}"
-        return candidate
+        letters = re.sub(r"[^A-Z]", "", (name or "").upper())
+        candidates = [letters[start:start + 3] for start in range(0, max(len(letters) - 2, 0))]
+        for candidate in candidates:
+            if len(candidate) == 3 and not cls.objects.filter(code=candidate).exists():
+                return candidate
+        while True:
+            candidate = "".join(random.choices(string.ascii_uppercase, k=3))
+            if not cls.objects.filter(code=candidate).exists():
+                return candidate
 
 
 class CompanySettings(TimeStampedModel):
@@ -187,6 +197,10 @@ class Branch(TimeStampedModel):
     mpesa_security_credential = models.CharField(max_length=1024, blank=True)
     mpesa_direct_result_url = models.CharField(max_length=255, blank=True)
     mpesa_direct_timeout_url = models.CharField(max_length=255, blank=True)
+    loyalty_enabled = models.BooleanField(default=False)
+    loyalty_points_rate = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("100.00"))
+    credit_sale_enabled = models.BooleanField(default=False)
+    whatsapp_sms_receipt_enabled = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["name"]

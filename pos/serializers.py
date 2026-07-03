@@ -74,6 +74,7 @@ class BranchSerializer(serializers.ModelSerializer):
             "mpesa_passkey", "mpesa_environment", "mpesa_callback_url", "mpesa_enabled",
             "mpesa_till_number", "mpesa_initiator_name", "mpesa_security_credential",
             "mpesa_direct_result_url", "mpesa_direct_timeout_url", "mpesa_direct_enabled",
+            "loyalty_enabled", "loyalty_points_rate", "credit_sale_enabled", "whatsapp_sms_receipt_enabled",
             "created_at", "updated_at",
         )
         extra_kwargs = {
@@ -514,6 +515,7 @@ class CustomerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Customer
         fields = "__all__"
+        read_only_fields = ("credit_balance", "loyalty_points")
 
     def validate(self, attrs):
         branch = attrs.get("branch")

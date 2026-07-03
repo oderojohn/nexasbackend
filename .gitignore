@@ -13,3 +13,6 @@ build/
 dist-new/
 staticfiles/
 *.bak
+
+.vercel
+.env*
