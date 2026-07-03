@@ -7,7 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
 
-from .models import Customer, Sale, Supplier
+from .models import Customer, CreditRepayment, Sale, Shift, Supplier
 from .serializers import CustomerSerializer, SupplierSerializer
 from .services import (
     adjust_loyalty_points,
@@ -83,18 +83,55 @@ class CustomerViewSet(viewsets.ModelViewSet):
         ]
         return Response(rows)
 
+    @action(detail=True, methods=["get"], url_path="credit-history")
+    def credit_history(self, request, pk=None):
+        customer = self.get_object()
+        repayments = customer.credit_repayments.select_related("recorded_by").order_by("-created_at")[:200]
+        rows = [
+            {
+                "id": r.id,
+                "amount": r.amount,
+                "method": r.method,
+                "reference": r.reference,
+                "recorded_by": r.recorded_by.username if r.recorded_by else "",
+                "created_at": r.created_at,
+            }
+            for r in repayments
+        ]
+        return Response(rows)
+
     @action(detail=True, methods=["post"], url_path="settle-credit")
     def settle_credit(self, request, pk=None):
-        if not is_branch_admin(request.user):
-            raise PermissionDenied("Only branch admins, company admins, or super admins can record credit repayments.")
         customer = self.get_object()
         try:
             amount = Decimal(str(request.data.get("amount", "0")))
         except InvalidOperation:
             raise ValidationError({"amount": "Enter a valid amount."})
-        record_credit_repayment(customer=customer, amount=amount, recorded_by=request.user)
+        method = request.data.get("method") or CreditRepayment.CASH
+        if method not in dict(CreditRepayment.METHOD_CHOICES):
+            raise ValidationError({"method": "Choose a valid payment method."})
+        reference = (request.data.get("reference") or "").strip()
+        shift = None
+        shift_id = request.data.get("shift")
+        if shift_id:
+            shift = Shift.objects.filter(pk=shift_id, branch=customer.branch).first()
+            if not shift:
+                raise ValidationError({"shift": "Shift not found for this branch."})
+        repayment = record_credit_repayment(
+            customer=customer, amount=amount, recorded_by=request.user,
+            method=method, reference=reference, shift=shift,
+        )
         customer.refresh_from_db()
-        return Response(CustomerSerializer(customer).data)
+        return Response({
+            "repayment": {
+                "id": repayment.id,
+                "amount": repayment.amount,
+                "method": repayment.method,
+                "reference": repayment.reference,
+                "created_at": repayment.created_at,
+            },
+            "customer": CustomerSerializer(customer).data,
+        })
 
     @action(detail=True, methods=["post"], url_path="award-loyalty-points")
     def award_points(self, request, pk=None):

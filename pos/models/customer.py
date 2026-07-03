@@ -6,6 +6,7 @@ from django.db.models import Q
 
 from ._base import SyncMixin, TimeStampedModel
 from .company import Branch
+from .shift import Shift
 
 
 class Customer(SyncMixin, TimeStampedModel):
@@ -35,9 +36,16 @@ class Customer(SyncMixin, TimeStampedModel):
 
 class CreditRepayment(TimeStampedModel):
     """A repayment recorded against a customer's outstanding credit balance."""
+    CASH = "cash"
+    MPESA = "mpesa"
+    METHOD_CHOICES = [(CASH, "Cash"), (MPESA, "M-Pesa")]
+
     customer = models.ForeignKey(Customer, related_name="credit_repayments", on_delete=models.CASCADE)
     branch = models.ForeignKey(Branch, related_name="credit_repayments", on_delete=models.CASCADE)
+    shift = models.ForeignKey(Shift, null=True, blank=True, related_name="credit_repayments", on_delete=models.SET_NULL)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=20, choices=METHOD_CHOICES, default=CASH)
+    reference = models.CharField(max_length=80, blank=True)
     recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     notes = models.CharField(max_length=240, blank=True)
 

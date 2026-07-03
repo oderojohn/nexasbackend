@@ -283,7 +283,7 @@ def void_sale(*, sale, user, reason):
 
 
 @transaction.atomic
-def record_credit_repayment(*, customer, amount, recorded_by, notes=""):
+def record_credit_repayment(*, customer, amount, recorded_by, method=CreditRepayment.CASH, reference="", shift=None, notes=""):
     customer = Customer.objects.select_for_update().get(pk=customer.pk)
     amount = quantize_money(amount)
     if amount <= 0:
@@ -293,11 +293,15 @@ def record_credit_repayment(*, customer, amount, recorded_by, notes=""):
     customer.credit_balance = quantize_money(customer.credit_balance - amount)
     customer.save(update_fields=["credit_balance", "updated_at"])
     repayment = CreditRepayment.objects.create(
-        customer=customer, branch=customer.branch, amount=amount, recorded_by=recorded_by, notes=notes,
+        customer=customer, branch=customer.branch, shift=shift, amount=amount,
+        method=method, reference=reference, recorded_by=recorded_by, notes=notes,
     )
+    if method == CreditRepayment.CASH and shift is not None:
+        shift.expected_cash = quantize_money(shift.expected_cash + amount)
+        shift.save(update_fields=["expected_cash", "updated_at"])
     audit(
         user=recorded_by, action="customer.settle_credit", entity="Customer", entity_id=customer.id,
-        branch=customer.branch, notes=f"Recorded repayment of {amount} for {customer.name}",
+        branch=customer.branch, notes=f"Recorded repayment of {amount} for {customer.name} via {method}",
     )
     return repayment
 

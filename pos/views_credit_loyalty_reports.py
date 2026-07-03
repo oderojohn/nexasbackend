@@ -62,9 +62,13 @@ class CreditLoyaltyReportsViewSet(viewsets.ViewSet):
         if not branch:
             return Response([])
         qs = _date_filtered(CreditRepayment.objects.filter(branch=branch).select_related("customer", "recorded_by"), request)
+        shift_id = request.query_params.get("shift")
+        if shift_id:
+            qs = qs.filter(shift_id=shift_id)
         rows = [
             {
-                "id": r.id, "customer_name": r.customer.name, "amount": r.amount,
+                "id": r.id, "customer_name": r.customer.name, "customer_phone": r.customer.phone,
+                "amount": r.amount, "method": r.method, "reference": r.reference,
                 "recorded_by": r.recorded_by.username if r.recorded_by else "", "created_at": r.created_at,
             }
             for r in qs.order_by("-created_at")[:500]
